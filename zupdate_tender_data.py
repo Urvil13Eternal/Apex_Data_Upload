@@ -93,13 +93,17 @@ def upload_single_corrigendum_document(document_data: Dict[str, Any], api_url: s
     success_count = 0
     error_count = 0
     
-    # Prepare API payload with doctype='Corrigendum' and docname='Corrigendum'
-    # Override the doctype and docname from mapped file to match requirements
+    # Prepare API payload
+    # Use doctype and docname from mapped file (which will be "CTC" if CTC=1, otherwise "Corrigendum" or "Tender Documents")
+    # If not present in mapped file, default to "Corrigendum"
+    doctype = document_data.get("doctype", "Corrigendum")
+    docname = document_data.get("docname", "Corrigendum")
+    
     payload = {
         "tenderid": document_data.get("tenderid"),
-        "doctype": "Corrigendum",  # Use "Corrigendum" instead of "Corrigendum Documents"
+        "doctype": doctype,  # Use doctype from mapped file (CTC if CTC=1, otherwise Corrigendum)
         "s3url": document_data.get("s3url"),
-        "docname": "Corrigendum"  # Use "Corrigendum" instead of "Corrigendum Documents"
+        "docname": docname  # Use docname from mapped file
     }
     
     # Call API
@@ -158,7 +162,7 @@ def upload_corrigendum_documents_for_tender(tender_id: str, documents_list: List
 
 if __name__ == "__main__":
     # File names - Update these to match your actual file names
-    input_file = "test_15_cor.json"
+    input_file = "Test_Corr.json"
     mapped_corrigendum_file = f"mapped_{input_file}"
     mapped_corrigendum_documents_file = f"mapped_doc_{input_file}"
     

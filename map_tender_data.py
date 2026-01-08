@@ -275,6 +275,22 @@ def map_shubham_to_db(shubham_data: Dict[str, Any], base_id: int = 1) -> Dict[st
         # Preserve the actual value (e.g., "Yes", "No", etc.)
         emd_exemption = str(emd_exemption).strip()
     
+    # Handle IsCTC - map from CTC field (for corrigendum_details table)
+    # If CTC is 1, set IsCTC to 1, otherwise 0
+    ctc_value = shubham_data.get("CTC")
+    is_ctc = 0  # Default to 0
+    if ctc_value is not None:
+        # Convert to int/float and check if it equals 1
+        try:
+            ctc_num = int(float(str(ctc_value).strip()))
+            if ctc_num == 1:
+                is_ctc = 1
+            else:
+                is_ctc = 0
+        except (ValueError, TypeError):
+            # If conversion fails, default to 0
+            is_ctc = 0
+    
     # Handle TenderSource - check if contains "gem" (case-insensitive)
     tender_source = shubham_data.get("TenderSource")
     
@@ -356,6 +372,7 @@ def map_shubham_to_db(shubham_data: Dict[str, Any], base_id: int = 1) -> Dict[st
         "IsCorrigendumArrived": shubham_data.get("CorrigendumType") is not None,  # Default False
         "CorrigendumType": shubham_data.get("CorrigendumType"),
         "CorrigendumTitle": shubham_data.get("CorrigendumTitle"),  # Map from CorrigendumTitle field
+        "IsCTC": is_ctc,  # Map from CTC field (1 = True, otherwise False/None) for corrigendum_details table
         "PreBidMeetingDate": prebid_date,
         "PreBidMeetingTime": None,  # Not available in Shubham's data
         "DocumentPurchaseDate": None,
@@ -481,7 +498,7 @@ def Process_Tender_Data_JSON_File(input_file: str, output_file: str):
 
 if __name__ == "__main__":
     # Process the mapping
-    input_file = "test_15_cor.json"
+    input_file = "Test_Corr.json"
 
     output_file = f"mapped_{input_file}"
     documents_output_file = f"mapped_doc_{input_file}"

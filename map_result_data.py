@@ -246,27 +246,36 @@ def map_single_result(
     
     # Map BidType to aocstatus:
     # For GEM: Use parent BidType (represents the current stage of the result file)
-    # For CPPP: Use bidder BidType (parent doesn't have BidType field)
+    # For CPPP: Use parent BidType if available, otherwise fallback to bidder BidType
     # Technical (0) → aocstatus = "Technical"
     # Financial (1) → aocstatus = "Financial"
     # AOC (2) → aocstatus = "AOC"
     aoc_status: Optional[str] = None
+    
+    # Determine which BidType to use for aocstatus mapping
+    # For GEM: Always use parent BidType
+    # For CPPP: Use parent BidType if it exists and is numeric, otherwise try bidder BidType
+    bid_type_for_aocstatus = None
     if tender_source == "GEM":
         # GEM: Use parent BidType to determine stage
-        if parent_bid_type == "0":
-            aoc_status = "Technical"
-        elif parent_bid_type == "1":
-            aoc_status = "Financial"
-        elif parent_bid_type == "2":
-            aoc_status = "AOC"
+        bid_type_for_aocstatus = parent_bid_type
     else:
-        # CPPP: Use bidder BidType (parent doesn't have BidType field)
-        if bidder_bid_type_clean == "0":
-            aoc_status = "Technical"
-        elif bidder_bid_type_clean == "1":
-            aoc_status = "Financial"
-        elif bidder_bid_type_clean == "2":
-            aoc_status = "AOC"
+        # CPPP: Prefer parent BidType if available and numeric, otherwise use bidder BidType
+        if parent_bid_type and parent_bid_type in ["0", "1", "2"]:
+            bid_type_for_aocstatus = parent_bid_type
+        elif bidder_bid_type_clean in ["0", "1", "2"]:
+            bid_type_for_aocstatus = bidder_bid_type_clean
+        else:
+            # If neither is numeric, try to infer from parent BidType as fallback
+            bid_type_for_aocstatus = parent_bid_type if parent_bid_type else None
+    
+    # Map the BidType value to aocstatus
+    if bid_type_for_aocstatus == "0":
+        aoc_status = "Technical"
+    elif bid_type_for_aocstatus == "1":
+        aoc_status = "Financial"
+    elif bid_type_for_aocstatus == "2":
+        aoc_status = "AOC"
     
     # Dynamically map status fields based on BidType and stage (GEM only):
     # For GEM Results:
@@ -785,9 +794,9 @@ def process_aoc_file(input_file: str, output_file: str) -> List[Dict[str, Any]]:
 
 if __name__ == "__main__":
     # Default paths in current workspace
-    input_path = "wbtenders_gov_in (1).json"
-    output_path = f"mapped_{input_path}"
-    documents_output_path = f"mapped_doc_{input_path}"
+    input_path = "Tech_Fin_AOC_Json/Technical_Json/eproc_punjab_gov_in_TEvolution.json"
+    output_path = f"Tech_Fin_AOC_Json/Technical_Json/mapped_{input_path.split('/')[-1]}"
+    documents_output_path = f"Tech_Fin_AOC_Json/Technical_Json/mapped_doc_{input_path.split('/')[-1]}"
     
     # Process result data mapping
     print("Processing result data mapping...")

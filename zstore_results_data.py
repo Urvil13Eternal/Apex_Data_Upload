@@ -259,9 +259,9 @@ def send_result_document_to_api(document_data):
 
 if __name__ == "__main__":
     # File paths
-    input_file = "GEM_CPP_Results_29_Dec/bidplus_gem_gov_in_AOC.json"
-    mapped_results_file = f"GEM_CPP_Results_29_Dec/mapped_{input_file.split('/')[-1]}"
-    mapped_documents_file = f"GEM_CPP_Results_29_Dec/mapped_doc_{input_file.split('/')[-1]}"
+    input_file = "Tech_Fin_AOC_Json/Technical_Json/eproc_punjab_gov_in_TEvolution.json"
+    mapped_results_file = f"Tech_Fin_AOC_Json/Technical_Json/mapped_{input_file.split('/')[-1]}"
+    mapped_documents_file = f"Tech_Fin_AOC_Json/Technical_Json/mapped_doc_{input_file.split('/')[-1]}"
     
     # Read mapped result data
     print(f"Reading mapped result data from: {mapped_results_file}")

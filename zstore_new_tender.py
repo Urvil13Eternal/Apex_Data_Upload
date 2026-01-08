@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 from botocore.exceptions import ClientError
 from botocore.config import Config
 from typing import Dict, Any, Optional, List, Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # API endpoints
 TENDER_POST_API = "http://13.202.159.122:8000/tenders/"
@@ -19,10 +22,10 @@ BOQ_DETAIL_API = "http://13.202.159.122:8000/boq/detail/"
 from html_to_json import extract_boq_data
 
 # AWS S3 Configuration
-AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID", "AKIAU2VF6N2ZLAEXHP5K")
-AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "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")
-BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "shubhum-object")
-AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+AWS_REGION = os.getenv("AWS_REGION")
 
 def read_data(file_path: str) -> list:
     """Read JSON data from file"""

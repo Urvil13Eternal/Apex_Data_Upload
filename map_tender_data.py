@@ -144,14 +144,14 @@ def convert_content_to_pdf(input_file):
     """
     Convert HTML content from tender JSON file to PDF files.
     Reads tender data, extracts Content HTML, converts to PDF,
-    and saves in content_pdf folder with tenderid as filename.
+    and saves in tender_content_pdf folder with tenderid as filename.
     """
     with open(input_file, "r", encoding='utf-8') as f:
         data = json.load(f)
 
-    # Create content_pdf directory if it doesn't exist
-    if not os.path.exists("content_pdf"):
-        os.makedirs("content_pdf")
+    # Create tender_content_pdf directory if it doesn't exist
+    if not os.path.exists("tender_content_pdf"):
+        os.makedirs("tender_content_pdf")
 
     processed_count = 0
     skipped_count = 0
@@ -173,8 +173,8 @@ def convert_content_to_pdf(input_file):
                 temp_html.write(content)
                 temp_html_path = temp_html.name
             
-            # Create PDF file path in content_pdf folder
-            pdf_path = os.path.join("content_pdf", f"{tender_id}.pdf")
+            # Create PDF file path in tender_content_pdf folder
+            pdf_path = os.path.join("tender_content_pdf", f"{tender_id}.pdf")
             
             # Convert HTML to PDF
             try:

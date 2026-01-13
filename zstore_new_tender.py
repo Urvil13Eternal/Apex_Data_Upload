@@ -671,13 +671,15 @@ def store_single_tender_with_documents(tender_data: Dict[str, Any], documents_fo
     result = send_tender_to_api(tender_data)
     
     tender_stored_successfully = False
+    db_tender_id = None  # Database tender ID (numeric)
     if result.get("success"):
         tender_success = 1
         tender_stored_successfully = True
         print(f"  ✓ Successfully stored tender {tender_id}")
         if "response" in result and isinstance(result["response"], dict):
             if "id" in result["response"]:
-                print(f"    Tender ID in DB: {result['response']['id']}")
+                db_tender_id = result["response"]["id"]
+                print(f"    Tender ID in DB: {db_tender_id}")
     else:
         tender_error = 1
         tender_stored_successfully = False
@@ -726,11 +728,17 @@ def store_single_tender_with_documents(tender_data: Dict[str, Any], documents_fo
         # Step 4: Store BOQ data from HTML (only if tender was stored successfully)
         if boq_html and boq_html.strip():
             print(f"  Step 4: Storing BOQ data from HTML for {tender_id}...")
-            # Normalize tender_id for BOQ storage to match database format
-            # Extract the first tender ID (before <br> if present) to match what's stored in DB
-            boq_tender_id = extract_tender_id(tender_id) if tender_id != "Unknown" else tender_id
-            if not boq_tender_id:
-                boq_tender_id = tender_id  # Fallback to original if extraction fails
+            # Use database tender ID if available, otherwise use normalized TenderID string
+            if db_tender_id is not None:
+                # Use the database tender ID (numeric) - this is what the BOQ API expects
+                boq_tender_id = str(db_tender_id)
+                print(f"    Using database tender ID: {boq_tender_id}")
+            else:
+                # Fallback: normalize tender_id for BOQ storage
+                boq_tender_id = extract_tender_id(tender_id) if tender_id != "Unknown" else tender_id
+                if not boq_tender_id:
+                    boq_tender_id = tender_id  # Fallback to original if extraction fails
+                print(f"    Using normalized TenderID: {boq_tender_id}")
             boq_data_success, boq_data_error = store_boq_from_html(boq_tender_id, boq_html)
         else:
             print(f"  Step 4: No BOQ HTML data found for {tender_id}")
@@ -778,7 +786,7 @@ def store_boq_head(tenderid: str) -> Optional[int]:
     Store BOQ head information and return the head ID.
     
     Args:
-        tenderid: Tender ID string
+        tenderid: Tender ID string (can be database ID or TenderID string)
         
     Returns:
         int: BOQ head ID if successful, None otherwise
@@ -789,13 +797,16 @@ def store_boq_head(tenderid: str) -> Optional[int]:
     }
     
     try:
+        print(f"    Attempting to store BOQ head with tenderid: {tenderid}")
         response = requests.post(BOQ_HEAD_API, json=payload, timeout=30)
         response.raise_for_status()
         
         result = response.json()
         
         if "id" in result:
-            return result["id"]
+            boq_head_id = result["id"]
+            print(f"    ✓ BOQ head API returned ID: {boq_head_id}")
+            return boq_head_id
         else:
             print(f"    ✗ Error: Unexpected response format: {result}")
             return None

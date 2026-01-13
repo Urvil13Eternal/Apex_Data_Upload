@@ -2,6 +2,11 @@
 Batch storing script for multiple mapped tender JSON files.
 Processes all mapped tender files in a directory and stores them in the database.
 Includes documents, BOQ data, and NIT documents.
+
+This script works with both tender and corrigendum data:
+- For tenders: NIT PDFs are expected in tender_content_pdf/ folder
+- For corrigendum: NIT PDFs are expected in corrigendum_content_pdf/ folder
+The storage process automatically detects and handles both types.
 """
 
 import os
@@ -74,12 +79,13 @@ def get_original_file(mapped_tender_file: str) -> str:
     """
     Get the corresponding original JSON file path for a mapped tender file.
     Removes 'mapped_' prefix to get the original filename.
+    Tries multiple locations: same directory, parent directory, and common source directories.
     
     Args:
         mapped_tender_file: Path to mapped tender file (e.g., "mapped_file.json")
         
     Returns:
-        Path to original file (e.g., "file.json")
+        Path to original file (e.g., "file.json") - returns first found location
     """
     directory = os.path.dirname(mapped_tender_file)
     filename = os.path.basename(mapped_tender_file)
@@ -91,7 +97,28 @@ def get_original_file(mapped_tender_file: str) -> str:
         # Fallback: use same filename
         original_filename = filename
     
-    return os.path.join(directory, original_filename)
+    # Try multiple locations to find the original file
+    possible_paths = [
+        # 1. Same directory as mapped file
+        os.path.join(directory, original_filename),
+        # 2. Parent directory (common when mapped files are in a subdirectory)
+        os.path.join(os.path.dirname(directory), original_filename) if directory else original_filename,
+        # 3. Common source directory names
+        os.path.join(os.path.dirname(directory), "source", original_filename) if directory else None,
+        os.path.join(os.path.dirname(directory), "original", original_filename) if directory else None,
+        os.path.join(os.path.dirname(directory), "input", original_filename) if directory else None,
+    ]
+    
+    # Filter out None values
+    possible_paths = [p for p in possible_paths if p is not None]
+    
+    # Return the first path that exists, or the first path if none exist (let store_tenders_with_documents handle the error)
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    
+    # If none found, return the most likely path (same directory)
+    return possible_paths[0] if possible_paths else os.path.join(directory, original_filename)
 
 
 def process_single_mapped_file(mapped_tender_file: str) -> Dict[str, Any]:
@@ -154,7 +181,11 @@ def process_single_mapped_file(mapped_tender_file: str) -> Dict[str, Any]:
         # Check if original JSON file exists
         if not os.path.exists(original_json_file):
             print(f"  ⚠ Warning: Original JSON file not found: {original_json_file}")
+            print(f"    This file is needed for BOQ HTML data extraction.")
+            print(f"    Please ensure the original JSON file exists in the same directory or parent directory.")
             print(f"    Continuing without BOQ HTML data...")
+        else:
+            print(f"  ✓ Found original JSON file: {original_json_file}")
         
         # Store tenders with documents and BOQ data
         # This function handles all the processing internally and prints detailed statistics
@@ -308,7 +339,7 @@ def batch_store_tenders(directory: str):
 
 if __name__ == "__main__":
     # Set your directory here
-    input_directory = "."
+    input_directory = "Test_10_Tender_Batch/mapped_tender"
     
     # Validate input directory
     if not input_directory:

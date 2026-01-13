@@ -7,6 +7,7 @@ Includes BOQ data collection and PDF conversion.
 import os
 import sys
 import glob
+import json
 import time
 from map_tender_data import (
     Process_Tender_Data_JSON_File,
@@ -15,6 +16,36 @@ from map_tender_data import (
     convert_content_to_pdf,
     convert_corrigendum_content_to_pdf
 )
+
+
+def detect_input_type(input_file: str) -> str:
+    """
+    Detect if the input file contains tender or corrigendum data.
+    Checks if Content1 field exists (corrigendum has it, tender doesn't).
+    
+    Args:
+        input_file: Path to input JSON file
+        
+    Returns:
+        "tender" or "corrigendum"
+    """
+    try:
+        with open(input_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if not isinstance(data, list) or len(data) == 0:
+            return "tender"  # Default to tender
+        
+        # Check first record for Content1 field (corrigendum has it)
+        first_record = data[0]
+        if "Content1" in first_record:
+            return "corrigendum"
+        else:
+            return "tender"
+    except Exception as e:
+        # Default to tender if detection fails
+        print(f"  ⚠ Warning: Could not detect input type: {e}. Defaulting to 'tender'.")
+        return "tender"
 
 
 def find_json_files(directory: str) -> list:
@@ -48,7 +79,7 @@ def find_json_files(directory: str) -> list:
     return sorted(json_files)
 
 
-def process_single_file(input_file: str, output_dir: str = None) -> tuple:
+def process_single_file(input_file: str, output_dir: str = None, input_type: str = None) -> tuple:
     """
     Process a single tender JSON file and create mapped outputs.
     Includes BOQ data collection and PDF conversion.
@@ -56,10 +87,15 @@ def process_single_file(input_file: str, output_dir: str = None) -> tuple:
     Args:
         input_file: Path to input JSON file
         output_dir: Optional output directory (if None, uses same directory as input)
+        input_type: Optional input type ("tender" or "corrigendum"). If None, will auto-detect.
         
     Returns:
         Tuple of (success: bool, mapped_tenders_count: int, mapped_documents_count: int, error_message: str)
     """
+    # Auto-detect input type if not provided
+    if input_type is None:
+        input_type = detect_input_type(input_file)
+        print(f"  Detected input type: {input_type}")
     try:
         # Determine output directory
         if output_dir is None:
@@ -82,21 +118,25 @@ def process_single_file(input_file: str, output_dir: str = None) -> tuple:
             print(f"  ⚠ Warning: Error collecting BOQ data: {str(e)}")
             # Continue processing even if BOQ collection fails
         
-        # Step 2: Convert HTML content to PDF
-        print(f"  Step 2: Converting HTML content to PDF...")
-        try:
-            convert_content_to_pdf(input_file)
-        except Exception as e:
-            print(f"  ⚠ Warning: Error converting content to PDF: {str(e)}")
-            # Continue processing even if PDF conversion fails
-        
-        # Step 2.5: Convert corrigendum Content and Content1 to PDF (for NIT documents)
-        print(f"  Step 2.5: Converting corrigendum Content and Content1 to PDF...")
-        try:
-            convert_corrigendum_content_to_pdf(input_file)
-        except Exception as e:
-            print(f"  ⚠ Warning: Error converting corrigendum content to PDF: {str(e)}")
-            # Continue processing even if PDF conversion fails
+        # Step 2: Convert HTML content to PDF based on input type
+        if input_type == "tender":
+            # For tender: Convert Content to PDF and store in tender_content_pdf folder
+            print(f"  Step 2: Converting tender Content to PDF...")
+            try:
+                convert_content_to_pdf(input_file)
+            except Exception as e:
+                print(f"  ⚠ Warning: Error converting tender content to PDF: {str(e)}")
+                # Continue processing even if PDF conversion fails
+        elif input_type == "corrigendum":
+            # For corrigendum: Convert Content and Content1 to PDF and store in corrigendum_content_pdf folder
+            print(f"  Step 2: Converting corrigendum Content and Content1 to PDF...")
+            try:
+                convert_corrigendum_content_to_pdf(input_file)
+            except Exception as e:
+                print(f"  ⚠ Warning: Error converting corrigendum content to PDF: {str(e)}")
+                # Continue processing even if PDF conversion fails
+        else:
+            print(f"  ⚠ Warning: Unknown input_type '{input_type}'. Skipping PDF conversion.")
         
         # Step 3: Process tender data mapping
         print(f"  Step 3: Processing tender data mapping...")
@@ -120,13 +160,15 @@ def process_single_file(input_file: str, output_dir: str = None) -> tuple:
         return False, 0, 0, error_msg
 
 
-def batch_map_tenders(directory: str, output_dir: str = None):
+def batch_map_tenders(directory: str, output_dir: str = None, default_input_type: str = None):
     """
     Process all JSON files in a directory and create mapped tender data and documents.
     
     Args:
         directory: Directory containing JSON files to process
         output_dir: Optional output directory (if None, uses same directory as input files)
+        default_input_type: Optional default input type for all files ("tender" or "corrigendum").
+                          If None, will auto-detect for each file.
     """
     print("=" * 60)
     print("BATCH MAPPING TENDER DATA")
@@ -171,7 +213,7 @@ def batch_map_tenders(directory: str, output_dir: str = None):
         start_time = time.time()
         
         success, tenders_count, documents_count, error_msg = process_single_file(
-            input_file, output_dir
+            input_file, output_dir, default_input_type
         )
         
         # Calculate elapsed time
@@ -240,8 +282,12 @@ def batch_map_tenders(directory: str, output_dir: str = None):
 
 if __name__ == "__main__":
     # Set your directories here
-    input_directory = "."
-    output_directory = None  # Set to None to use same directory as input, or specify a path
+    input_directory = "Test_10_Tender_Batch"
+    output_directory = "Test_10_Tender_Batch/mapped_tender"  # Set to None to use same directory as input, or specify a path
+    
+    # Set default input type for all files (optional)
+    # Options: "tender", "corrigendum", or None (auto-detect for each file)
+    default_input_type = None  # Change to "tender" or "corrigendum" if all files are the same type
     
     # Validate input directory
     if not input_directory:
@@ -253,5 +299,5 @@ if __name__ == "__main__":
         sys.exit(1)
     
     # Process all files in the directory
-    batch_map_tenders(input_directory, output_directory if output_directory else None)
+    batch_map_tenders(input_directory, output_directory if output_directory else None, default_input_type)
 

@@ -12,7 +12,8 @@ from map_tender_data import (
     Process_Tender_Data_JSON_File,
     map_tender_documents,
     collect_boq_data,
-    convert_content_to_pdf
+    convert_content_to_pdf,
+    convert_corrigendum_content_to_pdf
 )
 
 
@@ -87,6 +88,14 @@ def process_single_file(input_file: str, output_dir: str = None) -> tuple:
             convert_content_to_pdf(input_file)
         except Exception as e:
             print(f"  ⚠ Warning: Error converting content to PDF: {str(e)}")
+            # Continue processing even if PDF conversion fails
+        
+        # Step 2.5: Convert corrigendum Content and Content1 to PDF (for NIT documents)
+        print(f"  Step 2.5: Converting corrigendum Content and Content1 to PDF...")
+        try:
+            convert_corrigendum_content_to_pdf(input_file)
+        except Exception as e:
+            print(f"  ⚠ Warning: Error converting corrigendum content to PDF: {str(e)}")
             # Continue processing even if PDF conversion fails
         
         # Step 3: Process tender data mapping

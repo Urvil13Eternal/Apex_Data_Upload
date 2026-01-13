@@ -13,10 +13,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # API endpoints
-TENDER_POST_API = "http://13.202.159.122:8000/tenders/"
-TENDER_DOCUMENTS_API = "http://13.202.159.122:8000/tender-documents/"
-BOQ_HEAD_API = "http://13.202.159.122:8000/boq/head/"
-BOQ_DETAIL_API = "http://13.202.159.122:8000/boq/detail/"
+TENDER_POST_API = "https://api.tenderapex.com/tenders/"
+TENDER_DOCUMENTS_API = "https://api.tenderapex.com/tender-documents/"
+BOQ_HEAD_API = "https://api.tenderapex.com/boq/head/"
+BOQ_DETAIL_API = "https://api.tenderapex.com/boq/detail/"
 
 # Import BOQ extraction function
 from html_to_json import extract_boq_data
@@ -1131,16 +1131,16 @@ def store_tenders_with_documents(mapped_tender_file: str, mapped_documents_file:
 if __name__ == "__main__":
     # Specify the original JSON file to get BOQ HTML data
     # This should be the original input file (e.g., "jharkhandtenders_gov_in.json")
-    original_json_file = "Test_Tender.json"
+    original_json_file = "Uploading_Tender_Json09012026/1/defproc_gov_in_first_5.json"
 
     # Specify the mapped tender data file
     # Change this to your mapped tender JSON file
-    mapped_tender_file = "mapped_Test_Tender.json"
+    mapped_tender_file = "Uploading_Tender_Json09012026/1/mapped_defproc_gov_in_first_5.json"
     
     # Specify the mapped documents file
     # This should be the output from map_tender_documents.py
     # Format: "mapped_doc_{original_file_name}"
-    mapped_documents_file = "mapped_doc_Test_Tender.json"
+    mapped_documents_file = "Uploading_Tender_Json09012026/1/mapped_doc_defproc_gov_in_first_5.json"
     
     
     # Store tenders with their documents and BOQ data (one tender at a time)

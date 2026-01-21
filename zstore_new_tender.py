@@ -1131,16 +1131,16 @@ def store_tenders_with_documents(mapped_tender_file: str, mapped_documents_file:
 if __name__ == "__main__":
     # Specify the original JSON file to get BOQ HTML data
     # This should be the original input file (e.g., "jharkhandtenders_gov_in.json")
-    original_json_file = "Uploading_Tender_Json09012026/1/defproc_gov_in_first_5.json"
+    original_json_file = "Uploading_Tender_Json09012026/1/eproc_punjab_gov_in.json"
 
     # Specify the mapped tender data file
     # Change this to your mapped tender JSON file
-    mapped_tender_file = "Uploading_Tender_Json09012026/1/mapped_defproc_gov_in_first_5.json"
+    mapped_tender_file = "Uploading_Tender_Json09012026/1/mapped_eproc_punjab_gov_in.json"
     
     # Specify the mapped documents file
     # This should be the output from map_tender_documents.py
     # Format: "mapped_doc_{original_file_name}"
-    mapped_documents_file = "Uploading_Tender_Json09012026/1/mapped_doc_defproc_gov_in_first_5.json"
+    mapped_documents_file = "Uploading_Tender_Json09012026/1/mapped_doc_eproc_punjab_gov_in.json"
     
     
     # Store tenders with their documents and BOQ data (one tender at a time)

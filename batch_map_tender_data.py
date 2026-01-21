@@ -282,12 +282,12 @@ def batch_map_tenders(directory: str, output_dir: str = None, default_input_type
 
 if __name__ == "__main__":
     # Set your directories here
-    input_directory = "Test_10_Tender_Batch"
-    output_directory = "Test_10_Tender_Batch/mapped_tender"  # Set to None to use same directory as input, or specify a path
+    input_directory = "Uploading_Tender_Json09012026/2"
+    output_directory = "Uploading_Tender_Json09012026/2/mapped"  # Set to None to use same directory as input, or specify a path
     
     # Set default input type for all files (optional)
     # Options: "tender", "corrigendum", or None (auto-detect for each file)
-    default_input_type = None  # Change to "tender" or "corrigendum" if all files are the same type
+    default_input_type = "tender"  # Change to "tender" or "corrigendum" if all files are the same type
     
     # Validate input directory
     if not input_directory:

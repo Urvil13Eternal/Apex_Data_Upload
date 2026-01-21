@@ -654,7 +654,7 @@ def Process_Tender_Data_JSON_File(input_file: str, output_file: str):
 
 if __name__ == "__main__":
     # Process the mapping
-    input_file = "Uploading_Tender_Json09012026/1/defproc_gov_in_first_5.json"
+    input_file = "Uploading_Tender_Json09012026/1/eproc_punjab_gov_in.json"
     
     # Set input type: "tender" or "corrigendum"
     input_type = "tender"  # Change this to "tender" or "corrigendum" as needed

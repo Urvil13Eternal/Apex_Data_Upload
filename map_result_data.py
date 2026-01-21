@@ -1,9 +1,12 @@
 import json
 import os
 import requests
+import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
+
+from html_to_pdf import convert_html_to_pdf
 
 
 def parse_date_dd_mmm_yyyy(date_str: Optional[str]) -> Optional[str]:
@@ -572,6 +575,7 @@ def map_result_documents(input_file: str, output_file: str) -> List[Dict[str, An
     """
     Map result documents from data format to document payload format.
     Processes TenderFileName_1 through TenderFileName_N fields and creates document records.
+    Also includes NIT documents from Content and Content1 fields.
     
     Args:
         input_file: Path to input JSON file (e.g., "Results_Data/tntenders_gov_in.json")
@@ -630,6 +634,46 @@ def map_result_documents(input_file: str, output_file: str) -> List[Dict[str, An
                 # Safety limit: stop after checking up to 20 fields (in case of unexpected data)
                 if file_index > 20:
                     break
+            
+            # Add NIT documents from Content and Content1 fields
+            # Check if PDF files exist (they should be created by convert_result_content_to_pdf)
+            content = result.get("Content")
+            content1 = result.get("Content1")
+            
+            # Sanitize tender ID for filename lookup (PDFs are saved with sanitized names)
+            sanitized_tender_id = sanitize_tender_id_for_filename(tender_id)
+            
+            # Add NIT document for Content (tenderid_1.pdf)
+            if content and content.strip() != "":
+                pdf_path_1 = os.path.join("result_content_pdf", f"{sanitized_tender_id}_1.pdf")
+                if os.path.exists(pdf_path_1):
+                    # For now, use local file path. This will need to be uploaded to S3 later
+                    # The s3url will be set when the PDF is uploaded to S3
+                    document_record = {
+                        "tenderid": tender_id,  # Keep original tender_id for database
+                        "doctype": "NIT",
+                        "s3url": "",  # Will be set after S3 upload
+                        "docname": "NIT",
+                        "local_pdf_path": pdf_path_1,  # Temporary field to track local path
+                        "sanitized_tender_id": sanitized_tender_id  # Store sanitized version for filename lookup
+                    }
+                    document_records.append(document_record)
+            
+            # Add NIT document for Content1 (tenderid_2.pdf)
+            if content1 and content1.strip() != "":
+                pdf_path_2 = os.path.join("result_content_pdf", f"{sanitized_tender_id}_2.pdf")
+                if os.path.exists(pdf_path_2):
+                    # For now, use local file path. This will need to be uploaded to S3 later
+                    # The s3url will be set when the PDF is uploaded to S3
+                    document_record = {
+                        "tenderid": tender_id,  # Keep original tender_id for database
+                        "doctype": "NIT",
+                        "s3url": "",  # Will be set after S3 upload
+                        "docname": "NIT",
+                        "local_pdf_path": pdf_path_2,  # Temporary field to track local path
+                        "sanitized_tender_id": sanitized_tender_id  # Store sanitized version for filename lookup
+                    }
+                    document_records.append(document_record)
                     
         except Exception as e:
             print(f"Error processing result {result.get('TenderId', 'unknown')}: {e}")
@@ -648,6 +692,121 @@ def map_result_documents(input_file: str, output_file: str) -> List[Dict[str, An
     print(f"Successfully mapped {len(document_records)} document records from {input_file} to {output_file}")
     return document_records
 
+def sanitize_tender_id_for_filename(tender_id: str) -> str:
+    """
+    Sanitize tender ID to be safe for use in filenames.
+    Replaces invalid filename characters with underscores.
+    
+    Args:
+        tender_id: Original tender ID (e.g., "GEM/2025/B/7027851")
+        
+    Returns:
+        Sanitized tender ID safe for filenames (e.g., "GEM_2025_B_7027851")
+    """
+    if not tender_id:
+        return ""
+    
+    # Replace invalid filename characters with underscores
+    # Common invalid characters: / \ : * ? " < > |
+    invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+    sanitized = str(tender_id).strip()
+    
+    for char in invalid_chars:
+        sanitized = sanitized.replace(char, '_')
+    
+    # Remove any leading/trailing dots or spaces (Windows doesn't allow these)
+    sanitized = sanitized.strip('. ')
+    
+    return sanitized
+
+def convert_result_content_to_pdf(input_file):
+    """
+    Convert HTML content from result JSON file to PDF files.
+    Reads result data, extracts Content and Content1 HTML, converts to PDF,
+    and saves in result_content_pdf folder with tenderid_1.pdf and tenderid_2.pdf as filenames.
+    """
+    with open(input_file, "r", encoding='utf-8') as f:
+        data = json.load(f)
+
+    # Create result_content_pdf directory if it doesn't exist
+    if not os.path.exists("result_content_pdf"):
+        os.makedirs("result_content_pdf")
+
+    processed_count = 0
+    skipped_count = 0
+    
+    for result in data:
+        try:
+            # Extract tender ID - try TenderId first, then fallback to OrganisationResultID
+            tender_id = extract_tender_id(result.get("TenderId"))
+            if not tender_id:
+                # Fallback to OrganisationResultID if TenderId is not available
+                tender_id = result.get("OrganisationResultID")
+                if tender_id:
+                    tender_id = str(tender_id).strip()
+            
+            if not tender_id:
+                skipped_count += 1
+                continue
+            
+            # Sanitize tender ID for filename (replace invalid characters like /)
+            sanitized_tender_id = sanitize_tender_id_for_filename(tender_id)
+            
+            # Process Content field (first PDF)
+            content = result.get("Content")
+            if content and content.strip() != "":
+                try:
+                    # Create temporary HTML file
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as temp_html:
+                        temp_html.write(content)
+                        temp_html_path = temp_html.name
+                    
+                    # Create PDF file path in result_content_pdf folder using sanitized tender ID
+                    pdf_path = os.path.join("result_content_pdf", f"{sanitized_tender_id}_1.pdf")
+                    
+                    # Convert HTML to PDF
+                    convert_html_to_pdf(temp_html_path, pdf_path)
+                    processed_count += 1
+                    
+                    # Clean up temporary HTML file
+                    if os.path.exists(temp_html_path):
+                        os.remove(temp_html_path)
+                except Exception as e:
+                    print(f"Error converting Content to PDF for result {tender_id}: {e}")
+            
+            # Process Content1 field (second PDF)
+            content1 = result.get("Content1")
+            if content1 and content1.strip() != "":
+                try:
+                    # Create temporary HTML file
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as temp_html:
+                        temp_html.write(content1)
+                        temp_html_path = temp_html.name
+                    
+                    # Create PDF file path in result_content_pdf folder using sanitized tender ID
+                    pdf_path = os.path.join("result_content_pdf", f"{sanitized_tender_id}_2.pdf")
+                    
+                    # Convert HTML to PDF
+                    convert_html_to_pdf(temp_html_path, pdf_path)
+                    processed_count += 1
+                    
+                    # Clean up temporary HTML file
+                    if os.path.exists(temp_html_path):
+                        os.remove(temp_html_path)
+                except Exception as e:
+                    print(f"Error converting Content1 to PDF for result {tender_id}: {e}")
+            
+            # If neither Content nor Content1 exists, skip
+            if (not content or content.strip() == "") and (not content1 or content1.strip() == ""):
+                skipped_count += 1
+                    
+        except Exception as e:
+            print(f"Error processing result {result.get('TenderId', 'unknown')}: {e}")
+            skipped_count += 1
+            continue
+    
+    print(f"Processed {processed_count} content PDF files, skipped {skipped_count} results")
+
 def check_tender_has_data(tender_id: str) -> bool:
     """
     Check if tender has data in the API by calling result-details endpoint.
@@ -664,7 +823,7 @@ def check_tender_has_data(tender_id: str) -> bool:
         
         # URL encode the tender ID
         tender_id_encoded = quote(tender_id_clean, safe='')
-        api_url = f"http://13.202.159.122:8000/tender-results/result-details/{tender_id_encoded}"
+        api_url = f"https://api.tenderapex.com/tender-results/result-details/{tender_id_encoded}"
         
         response = requests.get(api_url, timeout=10)
         if response.status_code == 200:
@@ -797,6 +956,11 @@ if __name__ == "__main__":
     input_path = "Tech_Fin_AOC_Json/Technical_Json/eproc_punjab_gov_in_TEvolution.json"
     output_path = f"Tech_Fin_AOC_Json/Technical_Json/mapped_{input_path.split('/')[-1]}"
     documents_output_path = f"Tech_Fin_AOC_Json/Technical_Json/mapped_doc_{input_path.split('/')[-1]}"
+    
+    # Convert HTML content to PDF (Content and Content1 fields)
+    print("Converting HTML content to PDF...")
+    convert_result_content_to_pdf(input_path)
+    print("Content PDF conversion completed.\n")
     
     # Process result data mapping
     print("Processing result data mapping...")

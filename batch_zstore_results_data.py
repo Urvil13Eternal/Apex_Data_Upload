@@ -10,7 +10,9 @@ import json
 import time
 from zstore_results_data import (
     Read_Data, Send_Data_to_DB, Update_Result_Data, 
-    send_result_document_to_api, extract_tender_id
+    send_result_document_to_api, extract_tender_id,
+    process_result_nit_documents, AWS_ACCESS_KEY, AWS_SECRET_KEY, 
+    BUCKET_NAME, AWS_REGION, sanitize_tender_id_for_filename
 )
 
 
@@ -92,6 +94,8 @@ def process_single_mapped_file(mapped_results_file: str) -> dict:
         "documents_total": 0,
         "documents_success": 0,
         "documents_error": 0,
+        "nit_success": 0,
+        "nit_error": 0,
         "error_message": None
     }
     
@@ -227,18 +231,41 @@ def process_single_mapped_file(mapped_results_file: str) -> dict:
                 if documents_for_tender:
                     print(f"\n  Storing {len(documents_for_tender)} document(s) for tender: {tender_id}")
                     
-                    for doc_index, document_data in enumerate(documents_for_tender, 1):
+                    # Filter out NIT documents with empty s3url (they will be uploaded from local PDFs)
+                    documents_to_store = []
+                    for doc in documents_for_tender:
+                        # Skip NIT documents that have local_pdf_path (they need to be uploaded first)
+                        if doc.get('doctype') == 'NIT' and doc.get('local_pdf_path'):
+                            continue
+                        # Skip documents with empty s3url
+                        if not doc.get('s3url'):
+                            continue
+                        documents_to_store.append(doc)
+                    
+                    # Store regular documents (with S3 URLs)
+                    for doc_index, document_data in enumerate(documents_to_store, 1):
                         doc_result = send_result_document_to_api(document_data)
                         
                         if doc_result.get("success"):
                             stats["documents_success"] += 1
-                            print(f"    ✓ [{doc_index}/{len(documents_for_tender)}] Document stored: {document_data.get('s3url', 'Unknown')}")
+                            print(f"    ✓ [{doc_index}/{len(documents_to_store)}] Document stored: {document_data.get('s3url', 'Unknown')}")
                         else:
                             stats["documents_error"] += 1
-                            print(f"    ✗ [{doc_index}/{len(documents_for_tender)}] Failed to store document")
+                            print(f"    ✗ [{doc_index}/{len(documents_to_store)}] Failed to store document")
                             print(f"      S3URL: {document_data.get('s3url', 'Unknown')}")
                             if "error" in doc_result:
                                 print(f"      Error: {doc_result['error']}")
+                    
+                    # Process NIT documents (upload from local PDFs and store)
+                    if AWS_ACCESS_KEY and AWS_SECRET_KEY and BUCKET_NAME and AWS_REGION:
+                        nit_success, nit_error = process_result_nit_documents(
+                            tender_id, documents_for_tender,
+                            AWS_ACCESS_KEY, AWS_SECRET_KEY, BUCKET_NAME, AWS_REGION
+                        )
+                        stats["nit_success"] += nit_success
+                        stats["nit_error"] += nit_error
+                    else:
+                        print(f"  ⚠ AWS credentials not configured, skipping NIT PDF upload")
         
         # Clear documents from memory after processing
         del mapped_documents
@@ -298,6 +325,8 @@ def batch_store_results(directory: str):
     total_update_error = 0
     total_documents_success = 0
     total_documents_error = 0
+    total_nit_success = 0
+    total_nit_error = 0
     errors = []
     
     # Process each file
@@ -326,6 +355,8 @@ def batch_store_results(directory: str):
         total_update_error += stats["update_error"]
         total_documents_success += stats["documents_success"]
         total_documents_error += stats["documents_error"]
+        total_nit_success += stats["nit_success"]
+        total_nit_error += stats["nit_error"]
         
         # Format time display
         if minutes > 0:
@@ -343,6 +374,8 @@ def batch_store_results(directory: str):
                   f"{stats['technical_error'] + stats['update_error']} errors")
             print(f"      Documents: {stats['documents_success']} success, "
                   f"{stats['documents_error']} errors")
+            print(f"      NIT Documents: {stats['nit_success']} success, "
+                  f"{stats['nit_error']} errors")
             print(f"      Processing time: {time_str}")
         else:
             failed_files += 1
@@ -383,6 +416,10 @@ def batch_store_results(directory: str):
     print(f"  Successfully stored: {total_documents_success}")
     print(f"  Failed: {total_documents_error}")
     print()
+    print(f"NIT Documents:")
+    print(f"  Successfully uploaded and stored: {total_nit_success}")
+    print(f"  Failed: {total_nit_error}")
+    print()
     print(f"Total Processing Time: {overall_time_str}")
     print()
     
@@ -398,7 +435,7 @@ def batch_store_results(directory: str):
 
 if __name__ == "__main__":
     # Set your directory here
-    input_directory = "Tech_Fin_AOC_Json/Technical_Json/Technical_Json_Mapped"
+    input_directory = "Tech_Fin_AOC_Json/GeM_Results/GeM_Results_Mapped"
     
     # Validate input directory
     if not input_directory:

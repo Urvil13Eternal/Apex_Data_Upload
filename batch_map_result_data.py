@@ -7,7 +7,7 @@ import os
 import sys
 import glob
 import time
-from map_result_data import process_aoc_file, map_result_documents
+from map_result_data import process_aoc_file, map_result_documents, convert_result_content_to_pdf
 
 
 def find_json_files(directory: str) -> list:
@@ -65,6 +65,10 @@ def process_single_file(input_file: str, output_dir: str = None) -> tuple:
         input_filename = os.path.basename(input_file)
         output_path = os.path.join(output_dir, f"mapped_{input_filename}")
         documents_output_path = os.path.join(output_dir, f"mapped_doc_{input_filename}")
+        
+        # Convert HTML content to PDF (Content and Content1 fields)
+        print(f"  Converting HTML content to PDF...")
+        convert_result_content_to_pdf(input_file)
         
         # Process result data mapping
         # This function writes the file immediately and returns the data
@@ -210,8 +214,8 @@ def batch_map_results(directory: str, output_dir: str = None):
 
 if __name__ == "__main__":
     # Set your directories here
-    input_directory = "Tech_Fin_AOC_Json/Result_Json"
-    output_directory = "Tech_Fin_AOC_Json/map_results"
+    input_directory = "Tech_Fin_AOC_Json/GeM_Results"
+    output_directory = "Tech_Fin_AOC_Json/GeM_Results/GeM_Results_Mapped"
     
     # Validate input directory
     if not input_directory:

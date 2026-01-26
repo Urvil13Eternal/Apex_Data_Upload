@@ -86,7 +86,10 @@ def map_to_update_payload(item):
         "deletedby": item.get("deletedby") or 0
     }
     
-    # Add status fields based on aocstatus
+    # Add status fields based on aocstatus.
+    # IMPORTANT: Do not default statuses to "Accepted" here.
+    # The mapping script (`map_result_data.py`) is the single source of truth for
+    # accepted/rejected/null per bidder and stage (now for both GEM and CPPP).
     if aoc_status == "Technical":
         payload["technicalbidstatus"] = item.get("technicalbidstatus") or ""
     elif aoc_status == "Financial":
@@ -99,14 +102,13 @@ def map_to_update_payload(item):
         else:
             payload["technicalbidstatus"] = ""
         
-        # For Financial stage: always include financialbidstatus
-        # Use the value from item, default to "Accepted" if not set (for Financial bidders)
+        # For Financial stage: include financialbidstatus only if present; otherwise keep blank.
+        # This prevents incorrectly defaulting Technical bidders to "Accepted".
         financial_status = item.get("financialbidstatus")
         if financial_status is not None and str(financial_status).strip():
             payload["financialbidstatus"] = str(financial_status).strip()
         else:
-            # Default to "Accepted" for Financial stage if not explicitly set
-            payload["financialbidstatus"] = "Accepted"
+            payload["financialbidstatus"] = ""
     elif aoc_status == "AOC":
         # For AOC stage: include all three status fields
         # Technical bidders (bidtype=0) will have technicalbidstatus set
@@ -294,8 +296,13 @@ def extract_files_directory_path_from_documents(documents_for_tender: list) -> O
             if not s3_key:
                 continue
             
-            # Find '/files/' in the S3 key
-            if '/files/' in s3_key:
+            # Find '/files/' or '/Files/' in the S3 key (case-insensitive)
+            # Check both lowercase and uppercase variants
+            if '/Files/' in s3_key:
+                # Extract everything up to and including '/Files/'
+                files_dir_path = s3_key.split('/Files/')[0] + '/Files/'
+                return files_dir_path
+            elif '/files/' in s3_key:
                 # Extract everything up to and including '/files/'
                 files_dir_path = s3_key.split('/files/')[0] + '/files/'
                 return files_dir_path
@@ -306,7 +313,7 @@ def extract_files_directory_path_from_documents(documents_for_tender: list) -> O
 
 def upload_result_nit_pdf_to_s3(pdf_file_path: str, tender_id: str, pdf_suffix: str, files_directory_path: str,
                                 aws_access_key: str, aws_secret_key: str,
-                                bucket_name: str, region: str) -> Optional[Dict[str, str]]:
+                                bucket_name: str, region: str, doctype: str = "NIT") -> Optional[Dict[str, str]]:
     """
     Upload NIT PDF file to S3 bucket under {files_directory_path}NIT/ folder.
     The NIT folder will be created at the same level as other files.
@@ -324,6 +331,7 @@ def upload_result_nit_pdf_to_s3(pdf_file_path: str, tender_id: str, pdf_suffix: 
         aws_secret_key: AWS secret key
         bucket_name: S3 bucket name
         region: AWS region
+        doctype: Document type - "Result NIT" for Content field, "Tender NIT" for Content1 field
         
     Returns:
         Dictionary with keys: 's3url', 'docname', 'doctype' if successful, None otherwise
@@ -371,10 +379,13 @@ def upload_result_nit_pdf_to_s3(pdf_file_path: str, tender_id: str, pdf_suffix: 
         
         print(f"    ✓ NIT PDF uploaded successfully: {s3_url}")
         
+        # Use doctype parameter (defaults to "NIT" for backward compatibility)
+        docname = doctype if doctype in ["Result NIT", "Tender NIT"] else "NIT"
+        
         return {
             's3url': s3_url,
-            'docname': 'NIT',
-            'doctype': 'NIT'
+            'docname': docname,
+            'doctype': doctype
         }
         
     except FileNotFoundError:
@@ -393,7 +404,7 @@ def process_result_nit_documents(tender_id: str, documents_for_tender: list,
                                   bucket_name: str, region: str) -> Tuple[int, int]:
     """
     Process NIT PDF files from result_content_pdf folder, upload to S3, and store in result_documents table.
-    Handles both tenderid_1.pdf (from Content) and tenderid_2.pdf (from Content1).
+    Handles both tenderid_1.pdf (from Content → Result NIT) and tenderid_2.pdf (from Content1 → Tender NIT).
     The NIT folder will be created at the same directory level as other files.
     
     Args:
@@ -424,28 +435,50 @@ def process_result_nit_documents(tender_id: str, documents_for_tender: list,
     print(f"  Processing NIT documents for {tender_id}...")
     print(f"    Using files directory path: {files_directory_path}")
     
-    # Get sanitized tender ID for filename lookup
-    # Check if any document has sanitized_tender_id stored, otherwise sanitize on the fly
-    sanitized_tender_id = None
-    for doc in documents_for_tender:
-        if doc.get('sanitized_tender_id'):
-            sanitized_tender_id = doc.get('sanitized_tender_id')
-            break
+    # First, check for NIT documents with local_pdf_path in mapped documents
+    # This uses the doctype information from the mapped documents (Result NIT or Tender NIT)
+    nit_documents_with_local_path = [doc for doc in documents_for_tender 
+                                     if doc.get('doctype') in ['Result NIT', 'Tender NIT', 'NIT'] 
+                                     and doc.get('local_pdf_path')]
     
-    # If not found in documents, sanitize the tender_id
-    if not sanitized_tender_id:
-        sanitized_tender_id = sanitize_tender_id_for_filename(tender_id)
-    
-    # Process first NIT PDF (from Content field) - tenderid_1.pdf
-    pdf_file_path_1 = os.path.join(result_content_pdf_folder, f"{sanitized_tender_id}_1.pdf")
-    if os.path.exists(pdf_file_path_1):
-        print(f"    Processing NIT document 1 (from Content)...")
-        file_info = upload_result_nit_pdf_to_s3(
-            pdf_file_path_1, tender_id, "1", files_directory_path,
-            aws_access_key, aws_secret_key, bucket_name, region
-        )
-        
-        if file_info:
+    if nit_documents_with_local_path:
+        # Process NIT documents from the mapped documents list
+        print(f"  Processing NIT documents from mapped documents list...")
+        for nit_doc in nit_documents_with_local_path:
+            pdf_file_path = nit_doc.get('local_pdf_path')
+            doctype = nit_doc.get('doctype', 'NIT')
+            docname = nit_doc.get('docname', doctype)
+            
+            if not pdf_file_path or not os.path.exists(pdf_file_path):
+                print(f"    ⚠ NIT PDF file not found: {pdf_file_path}")
+                nit_error += 1
+                continue
+            
+            # Extract suffix from filename (e.g., "_1" or "_2")
+            pdf_suffix = ""
+            if "_1.pdf" in pdf_file_path:
+                pdf_suffix = "1"
+            elif "_2.pdf" in pdf_file_path:
+                pdf_suffix = "2"
+            
+            # Get sanitized tender ID from document or sanitize on the fly
+            sanitized_tender_id = nit_doc.get('sanitized_tender_id')
+            if not sanitized_tender_id:
+                sanitized_tender_id = sanitize_tender_id_for_filename(tender_id)
+            
+            print(f"    Processing {doctype} document (from {pdf_file_path})...")
+            
+            # Upload PDF to S3 with the correct doctype
+            file_info = upload_result_nit_pdf_to_s3(
+                pdf_file_path, tender_id, pdf_suffix, files_directory_path,
+                aws_access_key, aws_secret_key, bucket_name, region, doctype=doctype
+            )
+            
+            if not file_info:
+                print(f"    ✗ Failed to upload {doctype} PDF to S3")
+                nit_error += 1
+                continue
+            
             # Store in result_documents API
             document_data = {
                 'tenderid': tender_id,
@@ -458,47 +491,88 @@ def process_result_nit_documents(tender_id: str, documents_for_tender: list,
             
             if doc_result.get("success"):
                 nit_success += 1
-                print(f"    ✓ NIT document 1 stored: {file_info['docname']}")
+                print(f"    ✓ {doctype} document stored: {file_info['docname']}")
             else:
                 nit_error += 1
-                print(f"    ✗ Failed to store NIT document 1: {file_info['docname']}")
+                print(f"    ✗ Failed to store {doctype} document: {file_info['docname']}")
                 if "error" in doc_result:
                     print(f"      Error: {doc_result['error']}")
-        else:
-            nit_error += 1
-            print(f"    ✗ Failed to upload NIT PDF 1 to S3")
-    
-    # Process second NIT PDF (from Content1 field) - tenderid_2.pdf
-    pdf_file_path_2 = os.path.join(result_content_pdf_folder, f"{sanitized_tender_id}_2.pdf")
-    if os.path.exists(pdf_file_path_2):
-        print(f"    Processing NIT document 2 (from Content1)...")
-        file_info = upload_result_nit_pdf_to_s3(
-            pdf_file_path_2, tender_id, "2", files_directory_path,
-            aws_access_key, aws_secret_key, bucket_name, region
-        )
+    else:
+        # Fallback: Check if PDF files exist directly (for backward compatibility)
+        # Get sanitized tender ID for filename lookup
+        sanitized_tender_id = None
+        for doc in documents_for_tender:
+            if doc.get('sanitized_tender_id'):
+                sanitized_tender_id = doc.get('sanitized_tender_id')
+                break
         
-        if file_info:
-            # Store in result_documents API
-            document_data = {
-                'tenderid': tender_id,
-                'doctype': file_info['doctype'],
-                's3url': file_info['s3url'],
-                'docname': file_info['docname']
-            }
+        # If not found in documents, sanitize the tender_id
+        if not sanitized_tender_id:
+            sanitized_tender_id = sanitize_tender_id_for_filename(tender_id)
+        
+        # Process first NIT PDF (from Content field) - tenderid_1.pdf → "Result NIT"
+        pdf_file_path_1 = os.path.join(result_content_pdf_folder, f"{sanitized_tender_id}_1.pdf")
+        if os.path.exists(pdf_file_path_1):
+            print(f"    Processing NIT document 1 (from Content → Result NIT)...")
+            file_info = upload_result_nit_pdf_to_s3(
+                pdf_file_path_1, tender_id, "1", files_directory_path,
+                aws_access_key, aws_secret_key, bucket_name, region, doctype="Result NIT"
+            )
             
-            doc_result = send_result_document_to_api(document_data)
-            
-            if doc_result.get("success"):
-                nit_success += 1
-                print(f"    ✓ NIT document 2 stored: {file_info['docname']}")
+            if file_info:
+                # Store in result_documents API
+                document_data = {
+                    'tenderid': tender_id,
+                    'doctype': file_info['doctype'],
+                    's3url': file_info['s3url'],
+                    'docname': file_info['docname']
+                }
+                
+                doc_result = send_result_document_to_api(document_data)
+                
+                if doc_result.get("success"):
+                    nit_success += 1
+                    print(f"    ✓ NIT document 1 stored: {file_info['docname']}")
+                else:
+                    nit_error += 1
+                    print(f"    ✗ Failed to store NIT document 1: {file_info['docname']}")
+                    if "error" in doc_result:
+                        print(f"      Error: {doc_result['error']}")
             else:
                 nit_error += 1
-                print(f"    ✗ Failed to store NIT document 2: {file_info['docname']}")
-                if "error" in doc_result:
-                    print(f"      Error: {doc_result['error']}")
-        else:
-            nit_error += 1
-            print(f"    ✗ Failed to upload NIT PDF 2 to S3")
+                print(f"    ✗ Failed to upload NIT PDF 1 to S3")
+        
+        # Process second NIT PDF (from Content1 field) - tenderid_2.pdf → "Tender NIT"
+        pdf_file_path_2 = os.path.join(result_content_pdf_folder, f"{sanitized_tender_id}_2.pdf")
+        if os.path.exists(pdf_file_path_2):
+            print(f"    Processing NIT document 2 (from Content1 → Tender NIT)...")
+            file_info = upload_result_nit_pdf_to_s3(
+                pdf_file_path_2, tender_id, "2", files_directory_path,
+                aws_access_key, aws_secret_key, bucket_name, region, doctype="Tender NIT"
+            )
+            
+            if file_info:
+                # Store in result_documents API
+                document_data = {
+                    'tenderid': tender_id,
+                    'doctype': file_info['doctype'],
+                    's3url': file_info['s3url'],
+                    'docname': file_info['docname']
+                }
+                
+                doc_result = send_result_document_to_api(document_data)
+                
+                if doc_result.get("success"):
+                    nit_success += 1
+                    print(f"    ✓ NIT document 2 stored: {file_info['docname']}")
+                else:
+                    nit_error += 1
+                    print(f"    ✗ Failed to store NIT document 2: {file_info['docname']}")
+                    if "error" in doc_result:
+                        print(f"      Error: {doc_result['error']}")
+            else:
+                nit_error += 1
+                print(f"    ✗ Failed to upload NIT PDF 2 to S3")
     
     return nit_success, nit_error
 
@@ -556,9 +630,9 @@ def send_result_document_to_api(document_data):
 
 if __name__ == "__main__":
     # File paths
-    input_file = "Tech_Fin_AOC_Json/Technical_Json/eproc_punjab_gov_in_TEvolution.json"
-    mapped_results_file = f"Tech_Fin_AOC_Json/Technical_Json/mapped_{input_file.split('/')[-1]}"
-    mapped_documents_file = f"Tech_Fin_AOC_Json/Technical_Json/mapped_doc_{input_file.split('/')[-1]}"
+    input_file = "test_result.json"
+    mapped_results_file = f"mapped_{input_file}"
+    mapped_documents_file = f"mapped_doc_{input_file}"
     
     # Read mapped result data
     print(f"Reading mapped result data from: {mapped_results_file}")
@@ -607,7 +681,12 @@ if __name__ == "__main__":
         print("Processing Technical records (POST API)...")
         for item in technical_records:
             response = Send_Data_to_DB(item)
-            tender_id = extract_tender_id(response.get('tender_id'))
+            # Extract tender_id from item (not response) for consistent matching with documents
+            tender_id_raw = item.get("tenderid")
+            if tender_id_raw and str(tender_id_raw).upper().startswith("GEM"):
+                tender_id = str(tender_id_raw).strip() if tender_id_raw else None
+            else:
+                tender_id = extract_tender_id(tender_id_raw)
             
             if response.get("success"):
                 if tender_id:
@@ -635,13 +714,17 @@ if __name__ == "__main__":
         print("Processing AOC/Financial records (PATCH update API)...")
         for item in update_records:
             response = Update_Result_Data(item)
-            tender_id = extract_tender_id(response.get('tender_id'))
+            # Extract tender_id from item (not response) for consistent matching with documents
+            tender_id_raw = item.get("tenderid")
+            if tender_id_raw and str(tender_id_raw).upper().startswith("GEM"):
+                tender_id = str(tender_id_raw).strip() if tender_id_raw else None
+            else:
+                tender_id = extract_tender_id(tender_id_raw)
             
             # If update returns 404 (record not found), create it with POST API
             if response.get("status_code") == 404:
                 print(f"  → Record not found (404), creating with POST API...")
                 response = Send_Data_to_DB(item)
-                tender_id = extract_tender_id(response.get('tender_id'))
                 print(f"  → POST API Response: {response}")
             
             if response.get("success"):
@@ -658,6 +741,17 @@ if __name__ == "__main__":
     print("=" * 60)
     print("STORING RESULT DOCUMENTS")
     print("=" * 60)
+    print(f"Successfully processed tenders: {len(successfully_processed_tenders)}")
+    print(f"Tenders with documents available: {len(documents_by_tender)}")
+    
+    # Debug: Show some sample tender IDs
+    if successfully_processed_tenders:
+        sample_tender_ids = list(successfully_processed_tenders)[:5]
+        print(f"Sample processed tender IDs: {sample_tender_ids}")
+    if documents_by_tender:
+        sample_doc_tender_ids = list(documents_by_tender.keys())[:5]
+        print(f"Sample document tender IDs: {sample_doc_tender_ids}")
+    print()
     
     total_docs_uploaded = 0
     total_docs_failed = 0
@@ -675,13 +769,17 @@ if __name__ == "__main__":
             # Filter out NIT documents with empty s3url (they will be uploaded from local PDFs)
             documents_to_store = []
             for doc in documents_for_tender:
-                # Skip NIT documents that have local_pdf_path (they need to be uploaded first)
-                if doc.get('doctype') == 'NIT' and doc.get('local_pdf_path'):
+                doctype = doc.get('doctype', '')
+                # Skip NIT documents (Result NIT, Tender NIT, or NIT) that have local_pdf_path (they need to be uploaded first)
+                if doctype in ['NIT', 'Result NIT', 'Tender NIT'] and doc.get('local_pdf_path'):
                     continue
                 # Skip documents with empty s3url
                 if not doc.get('s3url'):
                     continue
                 documents_to_store.append(doc)
+            
+            if not documents_to_store:
+                print(f"  ⚠ No documents to store (all filtered out or have empty s3url)")
             
             # Store regular documents (with S3 URLs)
             for doc_index, document_data in enumerate(documents_to_store, 1):

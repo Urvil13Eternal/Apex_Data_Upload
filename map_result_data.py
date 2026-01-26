@@ -280,231 +280,159 @@ def map_single_result(
     elif bid_type_for_aocstatus == "2":
         aoc_status = "AOC"
     
-    # Dynamically map status fields based on BidType and stage (GEM only):
-    # For GEM Results:
-    #   Technical Stage (parent bidtype=0): technicalbidstatus = 'Accepted' if Qualified, 'Rejected' if Disqualified
-    #   Financial Stage (parent bidtype=1): 
-    #     - bidtype=0: financialbidstatus='Rejected', technicalbidstatus=null
-    #     - bidtype=1: financialbidstatus='Accepted', bidamount and rank from data
-    #   AOC Stage (parent bidtype=2):
-    #     - bidtype=0,1: aocbidstatus='Rejected', other status fields null
-    #     - bidtype=2: aocbidstatus='Accepted', bidamount and rank from data
-    # For CPPP: Keep existing logic
+    # Dynamically map status fields based on BidType and stage:
+    #   We now use the GEM stage-aware flow for both GEM and CPPP.
+    #   Stage is determined by parent BidType when present; otherwise bidder BidType.
+    #   Behaviours by stage mirror the previous GEM handling:
+    #     - Technical stage (0): only technical statuses are set.
+    #     - Financial stage (1): tech bidders keep technical status; fin bidders set financial status.
+    #     - AOC stage (2): aocbidstatus only set to Accepted for winning AOC bidders; others null.
     technical_status: Optional[str] = None
     financial_status: Optional[str] = None
     aoc_bid_status: Optional[str] = None
-    
-    # Check if this is GEM (for special handling)
-    is_gem = tender_source == "GEM"
-    
-    if is_gem:
-        # GEM Results - New logic
-        if parent_bid_type == "0":
-            # Technical Stage (parent bidtype=0)
-            if bidder_bid_type_clean == "0":
-                # Technical bidder: Set technicalbidstatus based on TechnicalBidStatus
-                tech_status = bidder.get("TechnicalBidStatus") or ""
-                tech_status_str = str(tech_status).strip().upper()
-                # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
+
+    # Use the GEM stage-aware flow for both GEM and CPPP
+    stage_bid_type = bid_type_for_aocstatus
+    if stage_bid_type == "0":
+        # Technical Stage
+        if bidder_bid_type_clean == "0":
+            tech_status = bidder.get("TechnicalBidStatus") or bidder.get("ResultStatus") or ""
+            tech_status_str = str(tech_status).strip().upper()
+            if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
+                technical_status = "Rejected"
+            elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
+                technical_status = "Accepted"
+            else:
+                technical_status = "Rejected"
+        # financialbidstatus and aocbidstatus remain null for technical stage
+    elif stage_bid_type == "1":
+        # Financial Stage
+        if bidder_bid_type_clean == "0":
+            # Technical bidder in Financial stage
+            financial_status = None
+            financial_bid_status_value = bidder.get("FinancialBidStatus")
+            if financial_bid_status_value:
+                fin_status_str = str(financial_bid_status_value).strip().upper()
+                if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
                     technical_status = "Rejected"
-                elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
+                elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
                     technical_status = "Accepted"
                 else:
                     technical_status = "Rejected"
-                # financialbidstatus and aocbidstatus remain null
-        elif parent_bid_type == "1":
-            # Financial Stage (parent bidtype=1)
-            if bidder_bid_type_clean == "0":
-                # Technical bidder in Financial stage (bidtype=0)
-                # Set financialbidstatus to NULL (not Rejected)
-                financial_status = None
-                # Set technicalbidstatus to "Accepted" or "Rejected" based on FinancialBidStatus
-                # For Technical bidders in Financial stage, FinancialBidStatus indicates their Technical qualification status
-                # Priority: FinancialBidStatus (most relevant for this stage) > TechnicalBidStatus > ResultStatus
-                financial_bid_status_value = bidder.get("FinancialBidStatus")
-                if financial_bid_status_value:
-                    # If FinancialBidStatus is present, use it directly
-                    fin_status_str = str(financial_bid_status_value).strip().upper()
-                    # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                    if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
-                        technical_status = "Rejected"
-                    elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
-                        technical_status = "Accepted"
-                    else:
-                        # Unknown status, default to Rejected
-                        technical_status = "Rejected"
-                else:
-                    # Fallback to TechnicalBidStatus or ResultStatus if FinancialBidStatus is not available
-                    tech_status_value = bidder.get("TechnicalBidStatus") or bidder.get("ResultStatus") or ""
-                    tech_status_str = str(tech_status_value).strip().upper()
-                    if "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
-                        technical_status = "Accepted"
-                    else:
-                        # If Disqualified, Rejected, or empty/unknown, set to Rejected
-                        technical_status = "Rejected"
-                # aocbidstatus should be NULL for Technical bidders
-                aoc_bid_status = None
-            elif bidder_bid_type_clean == "1":
-                # Financial bidder (bidtype=1)
-                # technicalbidstatus should be NULL for Financial bidders
-                technical_status = None
-                # Set financialbidstatus to "Accepted" or "Rejected" based on status
-                fin_status_value = bidder.get("FinancialBidStatus") or bidder.get("ResultStatus") or ""
-                fin_status_str = str(fin_status_value).strip().upper()
-                # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
-                    financial_status = "Rejected"
-                elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
-                    financial_status = "Accepted"
-                else:
-                    # If status is empty but has BidAmount, consider as Accepted (they qualified financially)
-                    # Otherwise default to Rejected
-                    if bid_amount is not None and bid_amount > 0:
-                        financial_status = "Accepted"
-                    else:
-                        financial_status = "Rejected"
-                # aocbidstatus should be NULL for Financial bidders
-                aoc_bid_status = None
-                # bidamount and rank are already set above from BidAmount and Remarks
-        elif parent_bid_type == "2":
-            # AOC Stage (parent bidtype=2)
-            if bidder_bid_type_clean == "0":
-                # Technical bidder in AOC stage (bidtype=0)
-                # Set aocbidstatus to NULL (not Rejected)
-                aoc_bid_status = None
-                # Set technicalbidstatus to "Accepted" or "Rejected" based on status
+            else:
                 tech_status_value = bidder.get("TechnicalBidStatus") or bidder.get("ResultStatus") or ""
                 tech_status_str = str(tech_status_value).strip().upper()
-                # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
-                    technical_status = "Rejected"
-                elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
+                if "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
                     technical_status = "Accepted"
                 else:
-                    # If empty/unknown, set to Rejected
                     technical_status = "Rejected"
-                # financialbidstatus should be NULL for Technical bidders
-                financial_status = None
-            elif bidder_bid_type_clean == "1":
-                # Financial bidder in AOC stage (bidtype=1)
-                # Set aocbidstatus to NULL (not Rejected)
+            aoc_bid_status = None
+        elif bidder_bid_type_clean == "1":
+            # Financial bidder
+            technical_status = None
+            fin_status_value = bidder.get("FinancialBidStatus") or bidder.get("ResultStatus") or ""
+            fin_status_str = str(fin_status_value).strip().upper()
+            if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
+                financial_status = "Rejected"
+            elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
+                financial_status = "Accepted"
+            else:
+                financial_status = "Accepted" if bid_amount is not None and bid_amount > 0 else "Rejected"
+            aoc_bid_status = None
+    elif stage_bid_type == "2":
+        # AOC Stage
+        if bidder_bid_type_clean == "0":
+            aoc_bid_status = None
+            tech_status_value = bidder.get("TechnicalBidStatus") or bidder.get("ResultStatus") or ""
+            tech_status_str = str(tech_status_value).strip().upper()
+            if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
+                technical_status = "Rejected"
+            elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
+                technical_status = "Accepted"
+            else:
+                technical_status = "Rejected"
+            financial_status = None
+        elif bidder_bid_type_clean == "1":
+            aoc_bid_status = None
+            technical_status = None
+            if bidder_list and bidder_name:
+                tech_bidder = next(
+                    (b for b in bidder_list 
+                     if str(b.get("BidType") or "").strip() == "0" 
+                     and str(b.get("BidderName") or "").strip().upper() == str(bidder_name).strip().upper()),
+                    None
+                )
+                if tech_bidder:
+                    tech_status_value = tech_bidder.get("TechnicalBidStatus") or tech_bidder.get("ResultStatus") or ""
+                    tech_status_str = str(tech_status_value).strip().upper()
+                    if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
+                        technical_status = "Rejected"
+                    elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
+                        technical_status = "Accepted"
+                    else:
+                        technical_status = "Rejected"
+            fin_status_value = bidder.get("FinancialBidStatus") or bidder.get("ResultStatus") or ""
+            fin_status_str = str(fin_status_value).strip().upper()
+            if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
+                financial_status = "Rejected"
+            elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
+                financial_status = "Accepted"
+            else:
+                financial_status = "Accepted" if bid_amount is not None and bid_amount > 0 else "Rejected"
+        elif bidder_bid_type_clean == "2":
+            aoc_status_value = bidder.get("ResultStatus") or ""
+            aoc_status_str = str(aoc_status_value).strip().upper()
+            rank_value = bidder.get("Remarks") or ""
+            rank_str = str(rank_value).strip().upper()
+
+            # Accept AOC when we have explicit acceptance cues, a calculated rank (e.g., L1/L2),
+            # or when CPPP AOC data lacks explicit cues (default to Accepted for CPPP AOC stage).
+            if "L1" in rank_str or "ACCEPTED" in aoc_status_str or "QUALIFIED" in aoc_status_str:
+                aoc_bid_status = "Accepted"
+            elif rank is not None and str(rank).strip().upper().startswith("L"):
+                aoc_bid_status = "Accepted"
+            elif tender_source == "CPPP" and stage_bid_type == "2":
+                # CPPP AOC files often omit explicit acceptance flags; treat AOC rows as Accepted.
+                aoc_bid_status = "Accepted"
+            else:
                 aoc_bid_status = None
-                # For Financial bidders in AOC stage, check if there's a corresponding Technical bidder
-                # to preserve technicalbidstatus value (so it doesn't get overwritten when updating)
-                technical_status = None
-                if bidder_list and bidder_name:
-                    # Find Technical bidder (bidtype=0) with same bidder name
-                    tech_bidder = next(
-                        (b for b in bidder_list 
-                         if str(b.get("BidType") or "").strip() == "0" 
-                         and str(b.get("BidderName") or "").strip().upper() == str(bidder_name).strip().upper()),
-                        None
-                    )
-                    if tech_bidder:
-                        tech_status_value = tech_bidder.get("TechnicalBidStatus") or tech_bidder.get("ResultStatus") or ""
-                        tech_status_str = str(tech_status_value).strip().upper()
-                        # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                        if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
-                            technical_status = "Rejected"
-                        elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
-                            technical_status = "Accepted"
-                        else:
-                            technical_status = "Rejected"
-                # Set financialbidstatus to "Accepted" or "Rejected" based on status
-                fin_status_value = bidder.get("FinancialBidStatus") or bidder.get("ResultStatus") or ""
-                fin_status_str = str(fin_status_value).strip().upper()
-                # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
-                    financial_status = "Rejected"
-                elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
-                    financial_status = "Accepted"
-                else:
-                    # If status is empty but has BidAmount, consider as Accepted (they qualified financially)
-                    # Otherwise default to Rejected
-                    if bid_amount is not None and bid_amount > 0:
+
+            technical_status = None
+            financial_status = None
+
+            if bidder_list and bidder_name:
+                tech_bidder = next(
+                    (b for b in bidder_list 
+                     if str(b.get("BidType") or "").strip() == "0" 
+                     and str(b.get("BidderName") or "").strip().upper() == str(bidder_name).strip().upper()),
+                    None
+                )
+                if tech_bidder:
+                    tech_status_value = tech_bidder.get("TechnicalBidStatus") or tech_bidder.get("ResultStatus") or ""
+                    tech_status_str = str(tech_status_value).strip().upper()
+                    if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
+                        technical_status = "Rejected"
+                    elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
+                        technical_status = "Accepted"
+                    else:
+                        technical_status = "Rejected"
+
+                fin_bidder = next(
+                    (b for b in bidder_list 
+                     if str(b.get("BidType") or "").strip() == "1" 
+                     and str(b.get("BidderName") or "").strip().upper() == str(bidder_name).strip().upper()),
+                    None
+                )
+                if fin_bidder:
+                    fin_status_value = fin_bidder.get("FinancialBidStatus") or fin_bidder.get("ResultStatus") or ""
+                    fin_status_str = str(fin_status_value).strip().upper()
+                    if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
+                        financial_status = "Rejected"
+                    elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
                         financial_status = "Accepted"
                     else:
-                        financial_status = "Rejected"
-                # bidamount and rank are already set above from BidAmount and Remarks
-            elif bidder_bid_type_clean == "2":
-                # AOC bidder (bidtype=2)
-                # Only set aocbidstatus to 'Accepted' when accepted, NULL when rejected (not "Rejected")
-                aoc_status_value = bidder.get("ResultStatus") or ""
-                aoc_status_str = str(aoc_status_value).strip().upper()
-                rank_value = bidder.get("Remarks") or ""
-                rank_str = str(rank_value).strip().upper()
-                
-                if "L1" in rank_str or "ACCEPTED" in aoc_status_str or "QUALIFIED" in aoc_status_str:
-                    aoc_bid_status = "Accepted"
-                else:
-                    # For rejected AOC bidders, keep aocbidstatus as NULL (not "Rejected")
-                    aoc_bid_status = None
-                
-                # For AOC bidders, check if same bidder qualified in Technical and Financial stages
-                # If bidder_list is provided, check for corresponding Technical and Financial bidders
-                technical_status = None
-                financial_status = None
-                
-                if bidder_list and bidder_name:
-                    # Find Technical bidder (bidtype=0) with same bidder name
-                    tech_bidder = next(
-                        (b for b in bidder_list 
-                         if str(b.get("BidType") or "").strip() == "0" 
-                         and str(b.get("BidderName") or "").strip().upper() == str(bidder_name).strip().upper()),
-                        None
-                    )
-                    if tech_bidder:
-                        tech_status_value = tech_bidder.get("TechnicalBidStatus") or tech_bidder.get("ResultStatus") or ""
-                        tech_status_str = str(tech_status_value).strip().upper()
-                        # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                        if "DISQUALIFIED" in tech_status_str or "REJECTED" in tech_status_str:
-                            technical_status = "Rejected"
-                        elif "QUALIFIED" in tech_status_str or "ACCEPTED" in tech_status_str:
-                            technical_status = "Accepted"
-                        else:
-                            technical_status = "Rejected"
-                    
-                    # Find Financial bidder (bidtype=1) with same bidder name
-                    fin_bidder = next(
-                        (b for b in bidder_list 
-                         if str(b.get("BidType") or "").strip() == "1" 
-                         and str(b.get("BidderName") or "").strip().upper() == str(bidder_name).strip().upper()),
-                        None
-                    )
-                    if fin_bidder:
-                        fin_status_value = fin_bidder.get("FinancialBidStatus") or fin_bidder.get("ResultStatus") or ""
-                        fin_status_str = str(fin_status_value).strip().upper()
-                        # Check for Disqualified/Rejected FIRST (before Qualified) because "DISQUALIFIED" contains "QUALIFIED"
-                        if "DISQUALIFIED" in fin_status_str or "REJECTED" in fin_status_str:
-                            financial_status = "Rejected"
-                        elif "QUALIFIED" in fin_status_str or "ACCEPTED" in fin_status_str:
-                            financial_status = "Accepted"
-                        else:
-                            # If status is empty but has BidAmount, consider as Accepted
-                            fin_bid_amount = to_decimal(fin_bidder.get("BidAmount"))
-                            if fin_bid_amount is not None and fin_bid_amount > 0:
-                                financial_status = "Accepted"
-                            else:
-                                financial_status = "Rejected"
-                
-                # bidamount and rank are already set above (rank calculated in process_aoc_file)
-    else:
-        # CPPP Results - Keep existing logic
-        if bidder_bid_type_clean == "0":
-            # Technical bidder: Normal Technical logic
-            parts = []
-            if technical_bid_status:
-                parts.append(str(technical_bid_status).strip())
-            if remarks:
-                parts.append(str(remarks).strip())
-            technical_status = " - ".join(parts) if parts else None
-        elif bidder_bid_type_clean == "1":
-            # Financial bidder: Always set financialbidstatus = "Accepted"
-            financial_status = "Accepted"
-        elif bidder_bid_type_clean == "2":
-            # AOC: Set aocbidstatus = 'Accepted'
-            aoc_bid_status = "Accepted"
+                        fin_bid_amount = to_decimal(fin_bidder.get("BidAmount"))
+                        financial_status = "Accepted" if fin_bid_amount is not None and fin_bid_amount > 0 else "Rejected"
 
     created_at = parse_timestamp(bidder.get("date_c"))
 
@@ -643,7 +571,7 @@ def map_result_documents(input_file: str, output_file: str) -> List[Dict[str, An
             # Sanitize tender ID for filename lookup (PDFs are saved with sanitized names)
             sanitized_tender_id = sanitize_tender_id_for_filename(tender_id)
             
-            # Add NIT document for Content (tenderid_1.pdf)
+            # Add NIT document for Content (tenderid_1.pdf) - Store as "Result NIT"
             if content and content.strip() != "":
                 pdf_path_1 = os.path.join("result_content_pdf", f"{sanitized_tender_id}_1.pdf")
                 if os.path.exists(pdf_path_1):
@@ -651,15 +579,15 @@ def map_result_documents(input_file: str, output_file: str) -> List[Dict[str, An
                     # The s3url will be set when the PDF is uploaded to S3
                     document_record = {
                         "tenderid": tender_id,  # Keep original tender_id for database
-                        "doctype": "NIT",
+                        "doctype": "Result NIT",  # Content field → Result NIT
                         "s3url": "",  # Will be set after S3 upload
-                        "docname": "NIT",
+                        "docname": "Result NIT",
                         "local_pdf_path": pdf_path_1,  # Temporary field to track local path
                         "sanitized_tender_id": sanitized_tender_id  # Store sanitized version for filename lookup
                     }
                     document_records.append(document_record)
             
-            # Add NIT document for Content1 (tenderid_2.pdf)
+            # Add NIT document for Content1 (tenderid_2.pdf) - Store as "Tender NIT"
             if content1 and content1.strip() != "":
                 pdf_path_2 = os.path.join("result_content_pdf", f"{sanitized_tender_id}_2.pdf")
                 if os.path.exists(pdf_path_2):
@@ -667,9 +595,9 @@ def map_result_documents(input_file: str, output_file: str) -> List[Dict[str, An
                     # The s3url will be set when the PDF is uploaded to S3
                     document_record = {
                         "tenderid": tender_id,  # Keep original tender_id for database
-                        "doctype": "NIT",
+                        "doctype": "Tender NIT",  # Content1 field → Tender NIT
                         "s3url": "",  # Will be set after S3 upload
-                        "docname": "NIT",
+                        "docname": "Tender NIT",
                         "local_pdf_path": pdf_path_2,  # Temporary field to track local path
                         "sanitized_tender_id": sanitized_tender_id  # Store sanitized version for filename lookup
                     }
@@ -877,22 +805,16 @@ def process_aoc_file(input_file: str, output_file: str) -> List[Dict[str, Any]]:
             # For AOC bidders (BidType = 2), calculate rank based on BidAmount
             aoc_bidders = [b for b in bidder_list if str(b.get("BidType") or "").strip() == "2"]
             if aoc_bidders:
-                # For CPPP AOC Stage Results (parent bid type = 2), all bidders are "L1"
-                if tender_source == "CPPP" and parent_bid_type == "2":
-                    # Set all AOC bidders to L1 for CPPP AOC stage
-                    for bidder in aoc_bidders:
-                        bidder["_calculated_rank"] = "L1"
-                else:
-                    # For GEM or other stages: Sort AOC bidders by BidAmount (ascending, None values go to end)
-                    def get_bid_amount(bidder):
-                        bid_amount = to_decimal(bidder.get("BidAmount"))
-                        return bid_amount if bid_amount is not None else float('inf')
-                    
-                    sorted_aoc_bidders = sorted(aoc_bidders, key=get_bid_amount)
-                    
-                    # Assign ranks: L1, L2, L3, etc.
-                    for index, bidder in enumerate(sorted_aoc_bidders, start=1):
-                        bidder["_calculated_rank"] = f"L{index}"
+                # Sort AOC bidders by BidAmount (ascending, None values go to end) for both GEM and CPPP
+                def get_bid_amount(bidder):
+                    bid_amount = to_decimal(bidder.get("BidAmount"))
+                    return bid_amount if bid_amount is not None else float('inf')
+                
+                sorted_aoc_bidders = sorted(aoc_bidders, key=get_bid_amount)
+                
+                # Assign ranks: L1, L2, L3, etc.
+                for index, bidder in enumerate(sorted_aoc_bidders, start=1):
+                    bidder["_calculated_rank"] = f"L{index}"
             
             # Process all bidders (to update previous stage data if present)
             for bidder in bidder_list:
@@ -914,22 +836,16 @@ def process_aoc_file(input_file: str, output_file: str) -> List[Dict[str, Any]]:
             # For AOC bidders (BidType = 2), calculate rank based on BidAmount
             aoc_bidders = [b for b in bidder_list if str(b.get("BidType") or "").strip() == "2"]
             if aoc_bidders:
-                # For CPPP AOC Stage Results (parent bid type = 2), all bidders are "L1"
-                if tender_source == "CPPP" and parent_bid_type == "2":
-                    # Set all AOC bidders to L1 for CPPP AOC stage
-                    for bidder in aoc_bidders:
-                        bidder["_calculated_rank"] = "L1"
-                else:
-                    # For GEM or other stages: Sort AOC bidders by BidAmount (ascending, None values go to end)
-                    def get_bid_amount(bidder):
-                        bid_amount = to_decimal(bidder.get("BidAmount"))
-                        return bid_amount if bid_amount is not None else float('inf')
-                    
-                    sorted_aoc_bidders = sorted(aoc_bidders, key=get_bid_amount)
-                    
-                    # Assign ranks: L1, L2, L3, etc.
-                    for index, bidder in enumerate(sorted_aoc_bidders, start=1):
-                        bidder["_calculated_rank"] = f"L{index}"
+                # Sort AOC bidders by BidAmount (ascending, None values go to end) for both GEM and CPPP
+                def get_bid_amount(bidder):
+                    bid_amount = to_decimal(bidder.get("BidAmount"))
+                    return bid_amount if bid_amount is not None else float('inf')
+                
+                sorted_aoc_bidders = sorted(aoc_bidders, key=get_bid_amount)
+                
+                # Assign ranks: L1, L2, L3, etc.
+                for index, bidder in enumerate(sorted_aoc_bidders, start=1):
+                    bidder["_calculated_rank"] = f"L{index}"
             
             for bidder in bidder_list:
                 mapped_row = map_single_result(parent, bidder, bidder_list)
@@ -953,9 +869,9 @@ def process_aoc_file(input_file: str, output_file: str) -> List[Dict[str, Any]]:
 
 if __name__ == "__main__":
     # Default paths in current workspace
-    input_path = "Tech_Fin_AOC_Json/Technical_Json/eproc_punjab_gov_in_TEvolution.json"
-    output_path = f"Tech_Fin_AOC_Json/Technical_Json/mapped_{input_path.split('/')[-1]}"
-    documents_output_path = f"Tech_Fin_AOC_Json/Technical_Json/mapped_doc_{input_path.split('/')[-1]}"
+    input_path = "test_result.json"
+    output_path = f"mapped_{input_path}"
+    documents_output_path = f"mapped_doc_{input_path}"
     
     # Convert HTML content to PDF (Content and Content1 fields)
     print("Converting HTML content to PDF...")
